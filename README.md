@@ -45,7 +45,7 @@ deftcode openssh-6.8p1 > sudo ./ssh -j eurialo@deftcode.local
 portknock: sending tcp sequence on port 9000.
 portknock: sending tcp sequence on port 8000.
 portknock: sending tcp sequence on port 7000.
-eurialo@deftcode.local's password: 
+eurialo@deftcode.local password: 
 ```
 
 With this patch you don't need to run before each connection, the knock request, eg:
