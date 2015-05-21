@@ -1,0 +1,142 @@
+--- ssh.c	2015-03-17 06:49:20.000000000 +0100
++++ ssh-knockd.c	2015-05-21 08:24:08.934636268 +0200
+@@ -200,7 +200,7 @@
+ usage(void)
+ {
+ 	fprintf(stderr,
+-"usage: ssh [-1246AaCfGgKkMNnqsTtVvXxYy] [-b bind_address] [-c cipher_spec]\n"
++"usage: ssh [-1246AaCfGgKkMNnqsTtVvXxYyj] [-b bind_address] [-c cipher_spec]\n"
+ "           [-D [bind_address:]port] [-E log_file] [-e escape_char]\n"
+ "           [-F configfile] [-I pkcs11] [-i identity_file]\n"
+ "           [-L [bind_address:]port:host:hostport] [-l login_name] [-m mac_spec]\n"
+@@ -220,6 +220,8 @@
+ /* from muxclient.c */
+ void muxclient(const char *);
+ void muxserver_listen(void);
++void retrv_sequences(char *host);
++void send_sequence(char *host, unsigned int port, int protocol);
+ 
+ /* ~/ expand a list of paths. NB. assumes path[n] is heap-allocated. */
+ static void
+@@ -511,6 +513,7 @@
+ 	struct stat st;
+ 	struct passwd *pw;
+ 	int timeout_ms;
++	int port_knocking_status = 0;
+ 	extern int optind, optreset;
+ 	extern char *optarg;
+ 	struct Forward fwd;
+@@ -597,7 +600,7 @@
+ 
+  again:
+ 	while ((opt = getopt(ac, av, "1246ab:c:e:fgi:kl:m:no:p:qstvx"
+-	    "ACD:E:F:GI:KL:MNO:PQ:R:S:TVw:W:XYy")) != -1) {
++	    "ACD:E:F:GI:KL:MNO:PQ:R:S:TVw:W:XYy:j")) != -1) {
+ 		switch (opt) {
+ 		case '1':
+ 			options.protocol = SSH_PROTO_1;
+@@ -908,6 +911,9 @@
+ 		case 'F':
+ 			config = optarg;
+ 			break;
++ 		case 'j':
++ 			port_knocking_status = 1;
++ 			break;
+ 		default:
+ 			usage();
+ 		}
+@@ -938,6 +944,9 @@
+ 	if (!host)
+ 		usage();
+ 
++ 	if (port_knocking_status)
++ 		retrv_sequences(host);
++
+ 	host_arg = xstrdup(host);
+ 
+ #ifdef WITH_OPENSSL
+@@ -2049,3 +2058,83 @@
+ 	signal(sig, main_sigchld_handler);
+ 	errno = save_errno;
+ }
++
++void retrv_sequences(char *host) 
++{
++	FILE *fd;
++	unsigned int found = 0, port = 7777;
++	char type[64], seq[256];
++	char *res_tok = NULL;
++	char opencloseSSH[256];
++
++	if ((fd = fopen("/etc/knockd.conf", "r")) == NULL) {
++		puts("portknock: unable to open /etc/knockd.conf");
++		exit(-1);
++	}
++
++	while(fgets(type, sizeof(type) - 1, fd) != 0) {
++		memset(seq, 0, sizeof seq);
++		sscanf(type, "%255s", seq);
++		if (!strcmp(seq, "sequence")) {
++			memset(opencloseSSH, 0, sizeof opencloseSSH);
++			sscanf(type, "%*s%*s%255s", opencloseSSH);
++			found++;
++		}
++	}
++
++	if (!found) {
++		puts("portknock: [opencloseSSH] sequence not found.");
++		exit(-1);
++	}
++
++	found = 0;
++	res_tok = strtok(opencloseSSH, ",");
++
++	while(res_tok != NULL) {
++		sscanf(res_tok, "%u", &port);
++	
++		printf("portknock: sending tcp sequence on port %u.\n", port);
++		fflush(stdout);
++		send_sequence(host, port, 0);
++		found++;
++
++		res_tok = strtok(NULL, ",");
++	}
++
++	fclose(fd);
++
++	if (!found) {
++		puts("portknock: invalid sequence format (port,port2,port3)");
++		exit(-1);
++	}
++}
++
++void send_sequence(char *host, unsigned int port, int protocol) 
++{
++	int sockfd;
++	struct sockaddr_in sockad;
++	struct hostent *sockhs;
++
++	if ((sockhs = gethostbyname(host)) == NULL) {
++		puts("portknock: invalid hostname.");
++		exit(-1);
++	}
++
++	if (!protocol) sockfd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
++	else sockfd = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
++
++	if (sockfd < 0) {
++		puts("portknock: failed to open socket.");
++		exit(-1);
++	}
++
++	if (!protocol) sockad.sin_family = AF_INET;
++	else sockad.sin_family = PF_INET;
++
++	sockad.sin_port = htons(port);
++	sockad.sin_addr = *((struct in_addr *)sockhs->h_addr);
++	memset(sockad.sin_zero, '\0', sizeof sockad.sin_zero);
++
++	connect(sockfd, (struct sockaddr *)&sockad, sizeof sockad);
++	close(sockfd);
++}
+\ No newline at end of file
